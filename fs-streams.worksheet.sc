@@ -1,7 +1,6 @@
-
 import $ivy.`co.fs2::fs2-core:3.6.1`
 import $ivy.`co.fs2::fs2-io:3.6.1`
-import $ivy.`org.typelevel::cats-effect:3.4.5` 
+import $ivy.`org.typelevel::cats-effect:3.4.5`
 
 import scala.concurrent.ExecutionContext.Implicits.global
 
@@ -10,64 +9,64 @@ import fs2.timeseries.TimeStamped
 import cats.effect.{IO}
 import java.time.Instant
 import scala.concurrent.duration._
+import scala.util.Random
 
-def putStrLn(s: String): IO[Unit] = IO(println(s))
-
-
-// implicit val timer: Timer[IO] = IO.timer(scala.concurrent.ExecutionContext.global)
-
-// Constant value stream
-def constantStream(value: Int) = Stream.constant(value)
-
-// Monotonically increasing stream
-def monotonStream(start: Int, step: Int) = Stream.iterate(start)(_ + step)
-
-// Combined stream
-def combinedStream = (constantStream(4).take(5) ++ monotonStream(5, 1).take(5)).repeat
-
-
-constantStream(5).take(5).toList
-monotonStream(10, 1).take(5).toList
-
-combinedStream.take(15).toList
-
-val value = 3
 val duration = 4.second
-def everyStream(duration: FiniteDuration): Stream[IO, Int] = Stream.awakeEvery[IO](duration).as(value)
 
+def constantStream(value: Int, duration: FiniteDuration): Stream[IO, Int] =
+  Stream.awakeEvery[IO](duration).as(value)
 
+def randomStream(mean: Double, deviation: Double, duration: FiniteDuration): Stream[IO, Double] =
+  Stream.awakeEvery[IO](duration).map(_ => mean + (deviation * Random.nextGaussian()))
 
-import cats.effect.unsafe.implicits.global
-extension [A](io: IO[A]) {
-    def debug: IO[A] = io.map { a => 
-        println(s"Value is: $a")
-        a    
-    }
+def monotonStream(start: Int, step: Int, duration: FiniteDuration): Stream[IO, Int] = Stream.awakeEvery[IO](duration).scan(start){
+    case (x, _) => x + step
 }
 
+def monotonCycleStream(
+    start: Int,
+    stop: Int,
+    step: Int,
+    duration: FiniteDuration
+): Stream[IO, Int] = Stream
+  .awakeEvery[IO](duration)
+  .scan(start) {
+    case (currentValue, _) => {
+      val t = currentValue + step
+      if (t > stop) start else t
+    }
+  }
+  .repeat
 
-def t = everyStream(5.second).map(TimeStamped.unsafeRealTime(_))
+// Sinus stream
+def sinusStream(
+    amplitude: Double = 1,
+    period: Double = 10,
+    phaseShift: Double = 0,
+    verticalShift: Double = 0,
+    duration: FiniteDuration = 1.second
+) = monotonCycleStream(start = 0, period.toInt, 1, duration)
+  .map { t =>
+    amplitude * Math.sin(
+      (2 * Math.PI * t) / period + phaseShift
+    ) + verticalShift
+  }
 
-t.take(5).compile.toList.unsafeRunSync()
+import cats.effect.unsafe.implicits.global
+extension[A](io: IO[A]) {
+  def debug: IO[A] = io.map { a =>
+    println(s"Value is: $a")
+    a
+  }
+}
 
-// Stream that emits a value every second
-
-//TimeStamped values only contain the duration, so another class is needed to store the timestamp
-// bad - to much rewriting
-// case class TimeInstanced[+A](timestamp: Instant, value: A) extends Product with Serializable {
-//     def map[B](f: A => B): TimeInstanced[B] = TimeInstanced(timestamp, f(value))
-//     def mapTime(f: Instant => Instant): TimeInstanced[A] = TimeInstanced(f(timestamp), value)
-// }
-
-// bad - breaks referential transparency
-// bad - exists FiniteDuration boundaries -- crashes
-// val timeStampedStream: Stream[Pure, TimeStamped[Int]] = monotonStream(1, 1).map(TimeStamped(System.currentTimeMillis().second, _))
-
-//def timeStampedStream: Stream[Pure, TimeStamped[Int]] = monotonStream(1,1).map(TimeStamped.realTime(_))
+constantStream(1, 1.second).take(5).compile.toList.unsafeRunSync()
+randomStream(1, 3, 1.second).take(5).compile.toList.unsafeRunSync()
+monotonStream(0, 3, 1.second).take(5).compile.toList.unsafeRunSync()
+monotonCycleStream(0, 3, 1, 1.second).take(5).compile.toList.unsafeRunSync()
+sinusStream(1, 3, 0, 0, 1.millisecond).take(5).compile.toList.unsafeRunSync()
 
 
+// def timestampedPipe: Pipe[Pure, Int,TimeStamped[Int]] = _.map(TimeStamped.realTime(_))
 
-// def a = TimeStamped.realTime(1)
-
-
-//timeStampedStream.take(5).toList
+//monotonStream(0, 3, 1.second).through(timestampedPipe).take(5).compile.toList.unsafeRunSync()
